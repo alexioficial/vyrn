@@ -1,0 +1,7 @@
+fn main() {
+    let x: u32 = 42;
+    println(x);
+
+    let big: u32 = 4000000000;
+    println(big);
+}

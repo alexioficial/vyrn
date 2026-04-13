@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(./target/release/vyrn.exe examples/hello.vyn --run)",
+      "Bash(./target/release/vyrn.exe test_mut.vyn)",
+      "Bash(./target/release/vyrn.exe test_len.vyn)",
+      "Bash(./target/release/vyrn.exe test_u32.vyn)",
+      "Bash(./target/release/vyrn.exe examples/fibonacci.vyn)",
+      "Bash(./target/release/vyrn.exe examples/struct_example.vyn)"
+    ]
+  }
+}

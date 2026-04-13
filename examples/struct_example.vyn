@@ -1,0 +1,19 @@
+struct Person {
+    name: str,
+    age: i32,
+}
+
+fn greet(person: Person) -> str {
+    return f"Hello, {person.name}!";
+}
+
+fn main() {
+    let person = Person { name: "Alice", age: 30 };
+
+    for i in 0..5 {
+        println(i);
+    }
+
+    let greeting = greet(person);
+    println(greeting);
+}
