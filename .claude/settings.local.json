@@ -7,7 +7,25 @@
       "Bash(./target/release/vyrn.exe test_len.vyn)",
       "Bash(./target/release/vyrn.exe test_u32.vyn)",
       "Bash(./target/release/vyrn.exe examples/fibonacci.vyn)",
-      "Bash(./target/release/vyrn.exe examples/struct_example.vyn)"
+      "Bash(./target/release/vyrn.exe examples/struct_example.vyn)",
+      "Bash(./target/debug/vyrn examples/hello.vyn --emit-ir)",
+      "Bash(./target/debug/vyrn examples/fibonacci.vyn --emit-ir)",
+      "Bash(./target/debug/vyrn test_u32.vyn --emit-ir)",
+      "Bash(./target/debug/vyrn test_len.vyn --emit-ir)",
+      "Bash(./target/debug/vyrn test_mut.vyn --emit-ir)",
+      "Bash(./target/debug/vyrn examples/struct_example.vyn --emit-ir)",
+      "Bash(clang --version)",
+      "Bash(where clang:*)",
+      "Read(//c//**)",
+      "Bash(find /c -name \"clang.exe\")",
+      "Bash(winget list:*)",
+      "Bash(./target/debug/vyrn examples/hello.vyn --run)",
+      "Bash(./target/debug/vyrn examples/fibonacci.vyn --run)",
+      "Bash(./target/debug/vyrn test_mut.vyn --run)",
+      "Bash(./target/debug/vyrn test_len.vyn --run)",
+      "Bash(./target/debug/vyrn test_u32.vyn --run)",
+      "Bash(./target/debug/vyrn examples/struct_example.vyn --run)",
+      "Bash(wc:*)"
     ]
   }
 }
