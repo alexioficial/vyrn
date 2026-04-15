@@ -4,6 +4,7 @@
 
 use std::ffi::CStr;
 use std::io::{self, Write};
+use std::sync::mpsc;
 
 // ─── println (with newline) ───────────────────────────────────────────────────
 
@@ -147,6 +148,121 @@ pub extern "C" fn vyrn_bool_to_string(v: i8) -> *const i8 {
     s.into_raw()
 }
 
+// ─── Generators via mpsc ──────────────────────────────────────────────────────
+// YieldCtx: allocated in generator wrapper. Layout:
+//   [0..8]   = *mut SyncSender<Option<i64>>
+//   [8..N]   = args (variable size, written by wrapper)
+// GenHandle: returned by vyrn_gen_start. Layout:
+//   [0..8]   = *mut Receiver<Option<i64>>
+//   [8..16]  = current value (i64)
+//   [16..17] = done flag (u8)
+
+#[repr(C)]
+#[allow(dead_code)]
+pub struct VyrnYieldCtx {
+    tx_ptr: *mut (),  // Box<SyncSender<Option<i64>>>
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VyrnGenHandle {
+    rx_ptr: *mut (),  // Box<Receiver<Option<i64>>>
+    current: i64,
+    done: u8,
+}
+
+#[no_mangle]
+pub extern "C" fn vyrn_gen_ctx_alloc(args_bytes: i64) -> i64 {
+    // Allocate space for VyrnYieldCtx (8 bytes) + args
+    let total_bytes = 8 + args_bytes as usize;
+    let layout = std::alloc::Layout::from_size_align(total_bytes, 8).unwrap();
+    let ptr = unsafe { std::alloc::alloc(layout) };
+    ptr as i64
+}
+
+#[no_mangle]
+pub extern "C" fn vyrn_gen_start(fn_ptr: i64, ctx_ptr: i64) -> i64 {
+    let ctx_ptr = ctx_ptr as *mut u8;
+
+    // Create the channel
+    let (tx, rx): (mpsc::SyncSender<Option<i64>>, mpsc::Receiver<Option<i64>>) = mpsc::sync_channel(0);
+    let rx_box = Box::new(rx);
+
+    // Store sender pointer at offset 0 of context
+    let tx_box = Box::new(tx);
+    let tx_ptr_ptr = ctx_ptr as *mut *mut ();
+    unsafe {
+        *tx_ptr_ptr = Box::into_raw(tx_box) as *mut ();
+    }
+
+    // Spawn thread running the generator body
+    let ctx_ptr_i64 = ctx_ptr as i64;
+    std::thread::spawn(move || {
+        // Cast fn_ptr to function pointer and call it
+        let fn_body: extern "C" fn(i64) = unsafe { std::mem::transmute(fn_ptr) };
+        fn_body(ctx_ptr_i64);
+    });
+
+    // Return GenHandle
+    let handle = VyrnGenHandle {
+        rx_ptr: Box::into_raw(rx_box) as *mut (),
+        current: 0,
+        done: 0,
+    };
+
+    let handle_box = Box::new(handle);
+    Box::into_raw(handle_box) as i64
+}
+
+#[no_mangle]
+pub extern "C" fn vyrn_gen_advance(handle_ptr: i64) -> i8 {
+    let handle = unsafe { &mut *(handle_ptr as *mut VyrnGenHandle) };
+
+    let rx = unsafe { &mut *(handle.rx_ptr as *mut mpsc::Receiver<Option<i64>>) };
+
+    match rx.recv() {
+        Ok(Some(val)) => {
+            handle.current = val;
+            handle.done = 0;
+            1
+        }
+        Ok(None) => {
+            handle.done = 1;
+            0
+        }
+        Err(_) => {
+            handle.done = 1;
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn vyrn_gen_value_i64(handle_ptr: i64) -> i64 {
+    let handle = unsafe { *(handle_ptr as *mut VyrnGenHandle) };
+    handle.current
+}
+
+#[no_mangle]
+pub extern "C" fn vyrn_yield_i64(ctx_ptr: i64, val: i64) {
+    let ctx_ptr = ctx_ptr as *mut u8;
+    let tx_ptr_ptr = ctx_ptr as *mut *mut ();
+    let tx_ptr = unsafe { *tx_ptr_ptr };
+    let tx = unsafe { &*(tx_ptr as *mut mpsc::SyncSender<Option<i64>>) };
+
+    let _ = tx.send(Some(val));
+}
+
+#[no_mangle]
+pub extern "C" fn vyrn_gen_end(ctx_ptr: i64) {
+    // Close the sender by dropping it
+    let ctx_ptr = ctx_ptr as *mut u8;
+    let tx_ptr_ptr = ctx_ptr as *mut *mut ();
+    let tx_ptr = unsafe { *tx_ptr_ptr };
+    let _tx = unsafe { Box::from_raw(tx_ptr as *mut mpsc::SyncSender<Option<i64>>) };
+    // tx is dropped here, closing the channel
+}
+
 // ─── Symbol table for JITBuilder ──────────────────────────────────────────────
 // List every (name, fn_ptr) pair so main.rs can register them all at once.
 
@@ -175,5 +291,11 @@ pub fn all_symbols() -> Vec<(&'static str, *const u8)> {
         ("vyrn_i32_to_string",    vyrn_i32_to_string    as *const u8),
         ("vyrn_f64_to_string",    vyrn_f64_to_string    as *const u8),
         ("vyrn_bool_to_string",   vyrn_bool_to_string   as *const u8),
+        ("vyrn_gen_ctx_alloc",    vyrn_gen_ctx_alloc    as *const u8),
+        ("vyrn_gen_start",        vyrn_gen_start        as *const u8),
+        ("vyrn_gen_advance",      vyrn_gen_advance      as *const u8),
+        ("vyrn_gen_value_i64",    vyrn_gen_value_i64    as *const u8),
+        ("vyrn_yield_i64",        vyrn_yield_i64        as *const u8),
+        ("vyrn_gen_end",          vyrn_gen_end          as *const u8),
     ]
 }

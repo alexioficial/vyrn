@@ -87,14 +87,16 @@ pub enum Stmt {
         else_block: Option<Vec<Stmt>>,
     },
     For {
+        label: Option<String>,
         var: String,
         iter: ForIter,
         body: Vec<Stmt>,
     },
-    While { cond: Expr, body: Vec<Stmt> },
+    While { label: Option<String>, cond: Expr, body: Vec<Stmt> },
     Return(Option<Expr>),
-    Break,
-    Continue,
+    Break(Option<String>),
+    Continue(Option<String>),
+    Yield(Expr),
     Expr(Expr),
 }
 
@@ -110,6 +112,7 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub ret_ty: Type,
     pub body: Vec<Stmt>,
+    pub is_gen: bool,
 }
 
 #[derive(Debug, Clone)]

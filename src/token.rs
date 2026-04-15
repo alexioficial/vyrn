@@ -19,6 +19,8 @@ pub enum TokenType {
     In,
     Break,
     Continue,
+    Yield,
+    Gen,
     True,
     False,
     Mut,
@@ -77,6 +79,7 @@ pub enum TokenType {
     DotDot,
     DotDotEq,
     Dot,
+    Tick,  // ' (apostrophe for loop labels)
 
     Eof,
 }

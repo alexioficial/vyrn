@@ -157,6 +157,8 @@ impl Lexer {
             "in"       => TokenType::In,
             "break"    => TokenType::Break,
             "continue" => TokenType::Continue,
+            "yield"    => TokenType::Yield,
+            "gen"      => TokenType::Gen,
             "true"     => TokenType::True,
             "false"    => TokenType::False,
             "mut"      => TokenType::Mut,
@@ -242,6 +244,7 @@ impl Lexer {
                 ',' => Token::new(TokenType::Comma,     ",", line, col),
                 ';' => Token::new(TokenType::Semicolon, ";", line, col),
                 ':' => Token::new(TokenType::Colon,     ":", line, col),
+                '\'' => Token::new(TokenType::Tick,     "'", line, col),
 
                 c => return Err(LexError { message: format!("Unexpected character: '{}'", c), line, col }),
             };

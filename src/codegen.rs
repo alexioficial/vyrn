@@ -14,7 +14,7 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{FuncId, Linkage, Module};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 
 // ─── Type helpers ─────────────────────────────────────────────────────────────
@@ -120,6 +120,7 @@ pub struct CodeGen {
 
     fn_sigs:     HashMap<String, (Vec<Type>, Type)>,
     struct_meta: HashMap<String, Vec<(String, Type)>>,
+    gen_fns:     HashSet<String>,  // Track generator functions
 
     // Per-function state
     vars:        HashMap<String, VarEntry>,
@@ -127,8 +128,9 @@ pub struct CodeGen {
     cur_ret_ty:  Type,
     is_main:     bool,
 
-    break_stack: Vec<Block>,
-    cont_stack:  Vec<Block>,
+    break_stack: Vec<(Option<String>, Block)>,  // (label, exit_block)
+    cont_stack:  Vec<(Option<String>, Block)>,  // (label, header_block)
+    cur_ctx_var: Option<Variable>,              // Context pointer in generator body
 
     // String pool: CStrings kept alive for JIT execution
     string_pool: Vec<CString>,
@@ -169,12 +171,14 @@ impl CodeGen {
             module:           BackendModule::Jit(module),
             fn_sigs:          HashMap::new(),
             struct_meta:      HashMap::new(),
+            gen_fns:          HashSet::new(),
             vars:             HashMap::new(),
             var_counter:      0,
             cur_ret_ty:       Type::Void,
             is_main:          false,
             break_stack:      Vec::new(),
             cont_stack:       Vec::new(),
+            cur_ctx_var:      None,
             string_pool:      Vec::new(),
             func_ids:         HashMap::new(),
             runtime_func_ids: HashMap::new(),
@@ -205,12 +209,14 @@ impl CodeGen {
             module:           BackendModule::Object(module),
             fn_sigs:          HashMap::new(),
             struct_meta:      HashMap::new(),
+            gen_fns:          HashSet::new(),
             vars:             HashMap::new(),
             var_counter:      0,
             cur_ret_ty:       Type::Void,
             is_main:          false,
             break_stack:      Vec::new(),
             cont_stack:       Vec::new(),
+            cur_ctx_var:      None,
             string_pool:      Vec::new(),
             func_ids:         HashMap::new(),
             runtime_func_ids: HashMap::new(),
@@ -238,12 +244,15 @@ impl CodeGen {
     // ── Top-level generation ──────────────────────────────────────────────────
 
     pub fn generate(&mut self, program: &Program) -> Result<(), String> {
-        // Pass 1: collect metadata
+        // Pass 1: collect metadata and identify generators
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) => {
                     let param_tys = f.params.iter().map(|p| p.ty.clone()).collect();
                     self.fn_sigs.insert(f.name.clone(), (param_tys, f.ret_ty.clone()));
+                    if f.is_gen {
+                        self.gen_fns.insert(f.name.clone());
+                    }
                 }
                 Decl::Struct(s) => {
                     self.struct_meta.insert(s.name.clone(), s.fields.clone());
@@ -254,21 +263,46 @@ impl CodeGen {
         // Pass 2: pre-declare all user functions in the module
         let call_conv = with_module_ref!(self, m, m.target_config().default_call_conv);
         for (name, (param_tys, ret_ty)) in self.fn_sigs.clone() {
-            let mut sig = Signature::new(call_conv);
-            for pt in &param_tys {
-                if *pt != Type::Void {
-                    sig.params.push(AbiParam::new(cl_type(pt)));
+            if self.gen_fns.contains(&name) {
+                // For generator functions, declare:
+                // 1. wrapper: (params...) -> i64 (returns GenHandle)
+                // 2. body: (i64) -> void
+                let mut wrapper_sig = Signature::new(call_conv);
+                for pt in &param_tys {
+                    if *pt != Type::Void {
+                        wrapper_sig.params.push(AbiParam::new(cl_type(pt)));
+                    }
                 }
+                wrapper_sig.returns.push(AbiParam::new(types::I64));  // GenHandle
+                let wrapper_fid = with_module!(self, m,
+                    m.declare_function(&name, Linkage::Local, &wrapper_sig).unwrap());
+                self.func_ids.insert(name.clone(), wrapper_fid);
+
+                // Body function
+                let body_name = format!("__{}_body", name);
+                let mut body_sig = Signature::new(call_conv);
+                body_sig.params.push(AbiParam::new(types::I64));  // ctx
+                let body_fid = with_module!(self, m,
+                    m.declare_function(&body_name, Linkage::Local, &body_sig).unwrap());
+                self.func_ids.insert(body_name, body_fid);
+            } else {
+                // Regular function
+                let mut sig = Signature::new(call_conv);
+                for pt in &param_tys {
+                    if *pt != Type::Void {
+                        sig.params.push(AbiParam::new(cl_type(pt)));
+                    }
+                }
+                let is_m = name == "main";
+                if is_m {
+                    sig.returns.push(AbiParam::new(types::I32));
+                } else if ret_ty != Type::Void {
+                    sig.returns.push(AbiParam::new(cl_type(&ret_ty)));
+                }
+                let linkage = if is_m { Linkage::Export } else { Linkage::Local };
+                let fid = with_module!(self, m, m.declare_function(&name, linkage, &sig).unwrap());
+                self.func_ids.insert(name, fid);
             }
-            let is_m = name == "main";
-            if is_m {
-                sig.returns.push(AbiParam::new(types::I32));
-            } else if ret_ty != Type::Void {
-                sig.returns.push(AbiParam::new(cl_type(&ret_ty)));
-            }
-            let linkage = if is_m { Linkage::Export } else { Linkage::Local };
-            let fid = with_module!(self, m, m.declare_function(&name, linkage, &sig).unwrap());
-            self.func_ids.insert(name, fid);
         }
 
         // Pass 3: compile each function
@@ -277,7 +311,11 @@ impl CodeGen {
         }).collect();
 
         for f in fns {
-            self.compile_fn(&f);
+            if f.is_gen {
+                self.compile_gen_fn(&f);
+            } else {
+                self.compile_fn(&f);
+            }
         }
 
         // Finalize JIT definitions
@@ -395,6 +433,167 @@ impl CodeGen {
         with_module!(self, m, m.clear_context(&mut self.cl_ctx));
     }
 
+    /// Compile a generator function as two functions:
+    /// 1. Wrapper: allocates context, spawns body thread, returns handle
+    /// 2. Body: runs in thread, executes generator code with yields
+    fn compile_gen_fn(&mut self, f: &FnDecl) {
+        // Calculate args size
+        let args_size: i64 = f.params.iter().map(|p| elem_size(&p.ty) as i64).sum();
+
+        // Compile wrapper function
+        self.compile_gen_wrapper(f, args_size);
+
+        // Compile body function
+        self.compile_gen_body(f, args_size);
+    }
+
+    fn compile_gen_wrapper(&mut self, f: &FnDecl, args_size: i64) {
+        self.vars.clear();
+        self.var_counter = 0;
+        let wrapper_func_id = self.func_ids[&f.name];
+
+        let call_conv = with_module_ref!(self, m, m.target_config().default_call_conv);
+        let mut sig = Signature::new(call_conv);
+        for p in &f.params {
+            if p.ty != Type::Void {
+                sig.params.push(AbiParam::new(cl_type(&p.ty)));
+            }
+        }
+        sig.returns.push(AbiParam::new(types::I64));  // GenHandle
+
+        self.cl_ctx.func.signature = sig;
+        self.cl_ctx.func.name = UserFuncName::user(0, wrapper_func_id.as_u32());
+
+        let fn_refs = self.predeclare_fn_refs(f);
+
+        let mut func = std::mem::replace(
+            &mut self.cl_ctx.func,
+            cranelift_codegen::ir::Function::new(),
+        );
+        let mut builder_ctx = FunctionBuilderContext::new();
+
+        {
+            let mut builder = FunctionBuilder::new(&mut func, &mut builder_ctx);
+
+            let entry_block = builder.create_block();
+            builder.append_block_params_for_function_params(entry_block);
+            builder.switch_to_block(entry_block);
+            builder.seal_block(entry_block);
+
+            // Allocate context: 8 bytes (sender) + args
+            let ctx_alloc_fn = fn_refs["vyrn_gen_ctx_alloc"];
+            let args_bytes = builder.ins().iconst(types::I64, args_size);
+            let ctx_alloc_call = builder.ins().call(ctx_alloc_fn, &[args_bytes]);
+            let ctx_ptr = builder.inst_results(ctx_alloc_call)[0];
+
+            // Write arguments into context at offset 8
+            let mut offset = 8i64;
+            for (i, p) in f.params.iter().enumerate() {
+                let param_val = builder.block_params(entry_block)[i];
+                let addr = builder.ins().iadd_imm(ctx_ptr, offset);
+                let flags = MemFlags::new();
+                builder.ins().store(flags, param_val, addr, 0);
+                offset += elem_size(&p.ty) as i64;
+            }
+
+            // Get function pointer for body
+            let body_name = format!("__{}_body", f.name);
+            let body_func_ref = fn_refs[&body_name];
+            let fn_ptr = builder.ins().func_addr(types::I64, body_func_ref);
+
+            // Call vyrn_gen_start to spawn thread
+            let gen_start_fn = fn_refs["vyrn_gen_start"];
+            let gen_start_call = builder.ins().call(gen_start_fn, &[fn_ptr, ctx_ptr]);
+            let handle = builder.inst_results(gen_start_call)[0];
+
+            builder.ins().return_(&[handle]);
+            builder.finalize();
+        }
+
+        self.cl_ctx.func = func;
+        with_module!(self, m, m.define_function(wrapper_func_id, &mut self.cl_ctx).unwrap());
+        with_module!(self, m, m.clear_context(&mut self.cl_ctx));
+    }
+
+    fn compile_gen_body(&mut self, f: &FnDecl, _args_size: i64) {
+        self.vars.clear();
+        self.var_counter = 0;
+        self.break_stack.clear();
+        self.cont_stack.clear();
+
+        let body_name = format!("__{}_body", f.name);
+        let body_func_id = self.func_ids[&body_name];
+        self.cur_ret_ty = Type::Void;
+
+        let call_conv = with_module_ref!(self, m, m.target_config().default_call_conv);
+        let mut sig = Signature::new(call_conv);
+        sig.params.push(AbiParam::new(types::I64));  // ctx
+
+        self.cl_ctx.func.signature = sig;
+        self.cl_ctx.func.name = UserFuncName::user(0, body_func_id.as_u32());
+
+        let fn_refs = self.predeclare_fn_refs(f);
+
+        let mut func = std::mem::replace(
+            &mut self.cl_ctx.func,
+            cranelift_codegen::ir::Function::new(),
+        );
+        let mut builder_ctx = FunctionBuilderContext::new();
+
+        {
+            let mut builder = FunctionBuilder::new(&mut func, &mut builder_ctx);
+
+            let entry_block = builder.create_block();
+            builder.append_block_params_for_function_params(entry_block);
+            builder.switch_to_block(entry_block);
+            builder.seal_block(entry_block);
+
+            // Extract context pointer and store it
+            let ctx_param = builder.block_params(entry_block)[0];
+            let ctx_var = Variable::new(self.var_counter);
+            self.var_counter += 1;
+            builder.declare_var(ctx_var, types::I64);
+            builder.def_var(ctx_var, ctx_param);
+            self.cur_ctx_var = Some(ctx_var);
+
+            // Read parameters from context at offset 8
+            let mut offset = 8i64;
+            for p in &f.params {
+                let addr = builder.ins().iadd_imm(ctx_param, offset);
+                let flags = MemFlags::new();
+                let val = builder.ins().load(cl_type(&p.ty), flags, addr, 0);
+                let var = Variable::new(self.var_counter);
+                self.var_counter += 1;
+                builder.declare_var(var, cl_type(&p.ty));
+                builder.def_var(var, val);
+                self.vars.insert(p.name.clone(), VarEntry {
+                    var, ty: p.ty.clone(),
+                    arr_size: None, arr_elem_ty: None,
+                });
+                offset += elem_size(&p.ty) as i64;
+            }
+
+            // Emit body
+            let mut terminated = false;
+            self.emit_stmts(&f.body.clone(), &mut builder, &fn_refs, &mut terminated);
+
+            // Call vyrn_gen_end to close the channel
+            if !terminated {
+                let gen_end_fn = fn_refs["vyrn_gen_end"];
+                builder.ins().call(gen_end_fn, &[ctx_param]);
+                builder.ins().return_(&[]);
+            }
+
+            builder.finalize();
+        }
+
+        self.cl_ctx.func = func;
+        with_module!(self, m, m.define_function(body_func_id, &mut self.cl_ctx).unwrap());
+        with_module!(self, m, m.clear_context(&mut self.cl_ctx));
+
+        self.cur_ctx_var = None;
+    }
+
     /// Pre-declare all needed function references before the FunctionBuilder
     /// is created (because declare_func_in_func needs &mut Function).
     fn predeclare_fn_refs(&mut self, _f: &FnDecl) -> HashMap<String, FuncRef> {
@@ -422,6 +621,14 @@ impl CodeGen {
         self.ensure_runtime_func("vyrn_f64_to_string",   &[types::F64],              Some(types::I64));
         self.ensure_runtime_func("vyrn_bool_to_string",  &[types::I8],               Some(types::I64));
         self.ensure_runtime_func("vyrn_fmod_f64",        &[types::F64, types::F64],  Some(types::F64));
+
+        // Generator functions
+        self.ensure_runtime_func("vyrn_gen_ctx_alloc",   &[types::I64],              Some(types::I64));
+        self.ensure_runtime_func("vyrn_gen_start",       &[types::I64, types::I64],  Some(types::I64));
+        self.ensure_runtime_func("vyrn_gen_advance",     &[types::I64],              Some(types::I8));
+        self.ensure_runtime_func("vyrn_gen_value_i64",   &[types::I64],              Some(types::I64));
+        self.ensure_runtime_func("vyrn_yield_i64",       &[types::I64, types::I64],  None);
+        self.ensure_runtime_func("vyrn_gen_end",         &[types::I64],              None);
 
         // Now build the FuncRef map (must be done before FunctionBuilder is alive)
         let mut refs: HashMap<String, FuncRef> = HashMap::new();
@@ -498,9 +705,10 @@ impl CodeGen {
                 builder.seal_block(merge_blk);
             }
 
-            Stmt::While { cond, body } => {
+            Stmt::While { label, cond, body } => {
                 let header_blk = builder.create_block();
                 let body_blk   = builder.create_block();
+                let back_edge_blk = builder.create_block();  // NEW: separate back-edge block
                 let exit_blk   = builder.create_block();
 
                 builder.ins().jump(header_blk, &[]);
@@ -508,8 +716,8 @@ impl CodeGen {
                 // Header — DO NOT seal yet (back-edge from body is unknown)
                 builder.switch_to_block(header_blk);
 
-                self.break_stack.push(exit_blk);
-                self.cont_stack.push(header_blk);
+                self.break_stack.push((label.clone(), exit_blk));
+                self.cont_stack.push((label.clone(), back_edge_blk));  // Continue jumps to back-edge
 
                 let (cv, _) = self.emit_expr(cond, builder, fn_refs);
                 builder.ins().brif(cv, body_blk, &[], exit_blk, &[]);
@@ -519,7 +727,12 @@ impl CodeGen {
                 builder.seal_block(body_blk);
                 let mut b_term = false;
                 self.emit_stmts(body, builder, fn_refs, &mut b_term);
-                if !b_term { builder.ins().jump(header_blk, &[]); }
+                if !b_term { builder.ins().jump(back_edge_blk, &[]); }
+
+                // Back-edge: jump to header
+                builder.switch_to_block(back_edge_blk);
+                builder.seal_block(back_edge_blk);
+                builder.ins().jump(header_blk, &[]);
 
                 // Seal header now that back-edge is known
                 builder.seal_block(header_blk);
@@ -532,8 +745,8 @@ impl CodeGen {
                 self.cont_stack.pop();
             }
 
-            Stmt::For { var, iter, body } => {
-                self.emit_for(var, iter, body, builder, fn_refs);
+            Stmt::For { label, var, iter, body } => {
+                self.emit_for(label, var, iter, body, builder, fn_refs);
             }
 
             Stmt::Return(expr) => {
@@ -553,17 +766,59 @@ impl CodeGen {
                 *terminated = true;
             }
 
-            Stmt::Break => {
-                if let Some(&target) = self.break_stack.last() {
-                    builder.ins().jump(target, &[]);
+            Stmt::Break(target_label) => {
+                let target_block = match target_label {
+                    Some(label) => {
+                        // Search stack for matching label (reverse order = innermost first)
+                        self.break_stack.iter().rev()
+                            .find(|(l, _)| l.as_ref() == Some(label))
+                            .map(|(_, block)| block)
+                    }
+                    None => {
+                        // No label: use innermost loop (top of stack)
+                        self.break_stack.last()
+                            .map(|(_, block)| block)
+                    }
+                };
+
+                if let Some(&block) = target_block {
+                    builder.ins().jump(block, &[]);
                     *terminated = true;
                 }
             }
 
-            Stmt::Continue => {
-                if let Some(&target) = self.cont_stack.last() {
-                    builder.ins().jump(target, &[]);
+            Stmt::Continue(target_label) => {
+                let target_block = match target_label {
+                    Some(label) => {
+                        self.cont_stack.iter().rev()
+                            .find(|(l, _)| l.as_ref() == Some(label))
+                            .map(|(_, block)| block)
+                    }
+                    None => {
+                        self.cont_stack.last()
+                            .map(|(_, block)| block)
+                    }
+                };
+
+                if let Some(&block) = target_block {
+                    builder.ins().jump(block, &[]);
                     *terminated = true;
+                }
+            }
+
+            Stmt::Yield(expr) => {
+                // Only valid in generator bodies
+                if let Some(ctx_var) = self.cur_ctx_var {
+                    let (val, val_ty) = self.emit_expr(expr, builder, fn_refs);
+                    // Cast value to i64
+                    let val_i64 = if matches!(val_ty, Type::I32) {
+                        builder.ins().sextend(types::I64, val)
+                    } else {
+                        val
+                    };
+                    let ctx_ptr = builder.use_var(ctx_var);
+                    let yield_fn = fn_refs["vyrn_yield_i64"];
+                    builder.ins().call(yield_fn, &[ctx_ptr, val_i64]);
                 }
             }
 
@@ -687,7 +942,7 @@ impl CodeGen {
 
     // ── For loop ──────────────────────────────────────────────────────────────
 
-    fn emit_for(&mut self, var: &str, iter: &ForIter, body: &[Stmt],
+    fn emit_for(&mut self, label: &Option<String>, var: &str, iter: &ForIter, body: &[Stmt],
                  builder: &mut FunctionBuilder, fn_refs: &HashMap<String, FuncRef>)
     {
         match iter {
@@ -706,6 +961,7 @@ impl CodeGen {
 
                 let header_blk = builder.create_block();
                 let body_blk   = builder.create_block();
+                let back_edge_blk = builder.create_block();  // NEW: separate back-edge block
                 let exit_blk   = builder.create_block();
 
                 builder.ins().jump(header_blk, &[]);
@@ -713,8 +969,8 @@ impl CodeGen {
                 // Header — don't seal yet
                 builder.switch_to_block(header_blk);
 
-                self.break_stack.push(exit_blk);
-                self.cont_stack.push(header_blk);
+                self.break_stack.push((label.clone(), exit_blk));
+                self.cont_stack.push((label.clone(), back_edge_blk));  // Continue jumps to back-edge, not header
 
                 let cur = builder.use_var(loop_var);
                 let (ev, _) = self.emit_expr(end, builder, fn_refs);
@@ -732,12 +988,17 @@ impl CodeGen {
                 self.emit_stmts(body, builder, fn_refs, &mut b_term);
 
                 if !b_term {
-                    let cur2 = builder.use_var(loop_var);
-                    let one  = builder.ins().iconst(types::I32, 1);
-                    let next = builder.ins().iadd(cur2, one);
-                    builder.def_var(loop_var, next);
-                    builder.ins().jump(header_blk, &[]);
+                    builder.ins().jump(back_edge_blk, &[]);
                 }
+
+                // Back-edge: increment and jump to header
+                builder.switch_to_block(back_edge_blk);
+                builder.seal_block(back_edge_blk);
+                let cur2 = builder.use_var(loop_var);
+                let one  = builder.ins().iconst(types::I32, 1);
+                let next = builder.ins().iadd(cur2, one);
+                builder.def_var(loop_var, next);
+                builder.ins().jump(header_blk, &[]);
 
                 builder.seal_block(header_blk);
 
@@ -750,10 +1011,75 @@ impl CodeGen {
             }
 
             ForIter::Expr(arr_expr) => {
-                // for x in arr  →  iterate by index
+                // Check if this is a generator function call
+                if let Expr::Call { name, args: _ } = arr_expr {
+                    if self.gen_fns.contains(name) {
+                        // Generator iteration: call gen fn, then advance until done
+                        let (handle, _) = self.emit_expr(arr_expr, builder, fn_refs);
+
+                        // Loop variable holds the yielded value
+                        let x_var = Variable::new(self.var_counter);
+                        self.var_counter += 1;
+                        builder.declare_var(x_var, types::I64);  // Values from gen are i64
+                        let dummy = builder.ins().iconst(types::I64, 0);
+                        builder.def_var(x_var, dummy);
+                        self.vars.insert(var.to_string(), VarEntry {
+                            var: x_var, ty: Type::I64,
+                            arr_size: None, arr_elem_ty: None,
+                        });
+
+                        let header_blk = builder.create_block();
+                        let body_blk = builder.create_block();
+                        let exit_blk = builder.create_block();
+
+                        builder.ins().jump(header_blk, &[]);
+                        builder.switch_to_block(header_blk);
+
+                        self.break_stack.push((label.clone(), exit_blk));
+                        self.cont_stack.push((label.clone(), header_blk));
+
+                        // Call vyrn_gen_advance
+                        let advance_fn = fn_refs["vyrn_gen_advance"];
+                        let advance_call = builder.ins().call(advance_fn, &[handle]);
+                        let ok = builder.inst_results(advance_call)[0];
+
+                        // Branch on result
+                        let one = builder.ins().iconst(types::I8, 1);
+                        let cmp = builder.ins().icmp(IntCC::Equal, ok, one);
+                        builder.ins().brif(cmp, body_blk, &[], exit_blk, &[]);
+
+                        // Body
+                        builder.switch_to_block(body_blk);
+                        builder.seal_block(body_blk);
+
+                        // Get value from handle
+                        let value_fn = fn_refs["vyrn_gen_value_i64"];
+                        let value_call = builder.ins().call(value_fn, &[handle]);
+                        let val = builder.inst_results(value_call)[0];
+                        builder.def_var(x_var, val);
+
+                        let mut b_term = false;
+                        self.emit_stmts(body, builder, fn_refs, &mut b_term);
+                        if !b_term {
+                            builder.ins().jump(header_blk, &[]);
+                        }
+
+                        builder.seal_block(header_blk);
+
+                        builder.switch_to_block(exit_blk);
+                        builder.seal_block(exit_blk);
+
+                        self.vars.remove(var);
+                        self.break_stack.pop();
+                        self.cont_stack.pop();
+                        return;
+                    }
+                }
+
+                // Regular array iteration
                 let arr_name = match arr_expr {
                     Expr::Ident(n) => n.clone(),
-                    _ => panic!("for-in: expected array variable"),
+                    _ => panic!("for-in: expected array variable or generator call"),
                 };
                 let entry = self.vars.get(&arr_name).cloned()
                     .expect("for-in: unknown array");
@@ -782,14 +1108,15 @@ impl CodeGen {
 
                 let header_blk = builder.create_block();
                 let body_blk   = builder.create_block();
+                let back_edge_blk = builder.create_block();  // NEW: separate back-edge block
                 let exit_blk   = builder.create_block();
 
                 builder.ins().jump(header_blk, &[]);
                 builder.switch_to_block(header_blk);
                 // Don't seal header yet
 
-                self.break_stack.push(exit_blk);
-                self.cont_stack.push(header_blk);
+                self.break_stack.push((label.clone(), exit_blk));
+                self.cont_stack.push((label.clone(), back_edge_blk));  // Continue jumps to back-edge
 
                 let cur_idx = builder.use_var(idx_var);
                 let limit = builder.ins().iconst(types::I64, arr_size as i64);
@@ -812,12 +1139,17 @@ impl CodeGen {
                 self.emit_stmts(body, builder, fn_refs, &mut b_term);
 
                 if !b_term {
-                    let old = builder.use_var(idx_var);
-                    let one = builder.ins().iconst(types::I64, 1);
-                    let next = builder.ins().iadd(old, one);
-                    builder.def_var(idx_var, next);
-                    builder.ins().jump(header_blk, &[]);
+                    builder.ins().jump(back_edge_blk, &[]);
                 }
+
+                // Back-edge: increment index and jump to header
+                builder.switch_to_block(back_edge_blk);
+                builder.seal_block(back_edge_blk);
+                let old = builder.use_var(idx_var);
+                let one = builder.ins().iconst(types::I64, 1);
+                let next = builder.ins().iadd(old, one);
+                builder.def_var(idx_var, next);
+                builder.ins().jump(header_blk, &[]);
 
                 builder.seal_block(header_blk);
 

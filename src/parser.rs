@@ -70,9 +70,27 @@ impl Parser {
     }
 
     fn parse_decl(&mut self) -> Result<Decl, ParseError> {
+        // Check for 'gen' prefix
+        let is_gen = if self.check(&TokenType::Gen) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         match self.peek().ty {
-            TokenType::Fn     => Ok(Decl::Fn(self.parse_fn_decl()?)),
-            TokenType::Struct => Ok(Decl::Struct(self.parse_struct_decl()?)),
+            TokenType::Fn     => Ok(Decl::Fn(self.parse_fn_decl(is_gen)?)),
+            TokenType::Struct => {
+                if is_gen {
+                    let tok = self.peek();
+                    return Err(ParseError {
+                        message: "Cannot use 'gen' with struct declaration".into(),
+                        line: tok.line,
+                        col: tok.col,
+                    });
+                }
+                Ok(Decl::Struct(self.parse_struct_decl()?))
+            }
             _ => {
                 let tok = self.peek();
                 Err(ParseError {
@@ -84,7 +102,7 @@ impl Parser {
         }
     }
 
-    fn parse_fn_decl(&mut self) -> Result<FnDecl, ParseError> {
+    fn parse_fn_decl(&mut self, is_gen: bool) -> Result<FnDecl, ParseError> {
         self.consume(&TokenType::Fn)?;
         let name = self.consume(&TokenType::Identifier)?.value;
 
@@ -109,7 +127,7 @@ impl Parser {
         };
 
         let body = self.parse_block()?;
-        Ok(FnDecl { name, params, ret_ty, body })
+        Ok(FnDecl { name, params, ret_ty, body, is_gen })
     }
 
     fn parse_struct_decl(&mut self) -> Result<StructDecl, ParseError> {
@@ -177,15 +195,63 @@ impl Parser {
     // ──────────────────────────────────────────────────────────────
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+        // Check for loop label: 'label: while/for
+        let label = if self.check(&TokenType::Tick) {
+            self.advance();  // consume '
+            let name = self.consume(&TokenType::Identifier)?.value;
+            self.consume(&TokenType::Colon)?;
+            Some(name)
+        } else {
+            None
+        };
+
         match self.peek().ty {
             TokenType::Let      => self.parse_var_decl(),
             TokenType::If       => self.parse_if(),
-            TokenType::For      => self.parse_for(),
-            TokenType::While    => self.parse_while(),
+            TokenType::For      => self.parse_for(label),
+            TokenType::While    => self.parse_while(label),
             TokenType::Return   => self.parse_return(),
-            TokenType::Break    => { self.advance(); self.consume(&TokenType::Semicolon)?; Ok(Stmt::Break) }
-            TokenType::Continue => { self.advance(); self.consume(&TokenType::Semicolon)?; Ok(Stmt::Continue) }
-            _                   => self.parse_expr_or_assign(),
+            TokenType::Break    => {
+                self.advance();
+                let target = if self.check(&TokenType::Tick) {
+                    self.advance();
+                    let lbl = self.consume(&TokenType::Identifier)?.value;
+                    Some(lbl)
+                } else {
+                    None
+                };
+                self.consume(&TokenType::Semicolon)?;
+                Ok(Stmt::Break(target))
+            }
+            TokenType::Continue => {
+                self.advance();
+                let target = if self.check(&TokenType::Tick) {
+                    self.advance();
+                    let lbl = self.consume(&TokenType::Identifier)?.value;
+                    Some(lbl)
+                } else {
+                    None
+                };
+                self.consume(&TokenType::Semicolon)?;
+                Ok(Stmt::Continue(target))
+            }
+            TokenType::Yield    => {
+                self.advance();
+                let val = self.parse_expr()?;
+                self.consume(&TokenType::Semicolon)?;
+                Ok(Stmt::Yield(val))
+            }
+            _                   => {
+                if label.is_some() {
+                    let tok = self.peek();
+                    return Err(ParseError {
+                        message: "Loop label can only be used with 'while' or 'for'".into(),
+                        line: tok.line,
+                        col: tok.col,
+                    });
+                }
+                self.parse_expr_or_assign()
+            }
         }
     }
 
@@ -229,7 +295,7 @@ impl Parser {
         Ok(Stmt::If { cond, then_block, else_block })
     }
 
-    fn parse_for(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_for(&mut self, label: Option<String>) -> Result<Stmt, ParseError> {
         self.consume(&TokenType::For)?;
         let var = self.consume(&TokenType::Identifier)?.value;
         self.consume(&TokenType::In)?;
@@ -250,14 +316,14 @@ impl Parser {
         };
 
         let body = self.parse_block()?;
-        Ok(Stmt::For { var, iter, body })
+        Ok(Stmt::For { label, var, iter, body })
     }
 
-    fn parse_while(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_while(&mut self, label: Option<String>) -> Result<Stmt, ParseError> {
         self.consume(&TokenType::While)?;
         let cond = self.parse_expr()?;
         let body = self.parse_block()?;
-        Ok(Stmt::While { cond, body })
+        Ok(Stmt::While { label, cond, body })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, ParseError> {

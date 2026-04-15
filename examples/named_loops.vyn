@@ -1,0 +1,47 @@
+fn main() {
+    println("=== Labeled breaks in nested while loops ===");
+    'outer: while true {
+        let i = 0;
+        'inner: while i < 5 {
+            if i == 3 {
+                break 'outer;
+            }
+            println(i);
+            i = i + 1;
+        }
+    }
+
+    println("Done with nested while loops");
+
+    println("=== Labeled breaks in nested for loops ===");
+    'loop_a: for x in 0..3 {
+        'loop_b: for y in 0..3 {
+            if y == 1 {
+                break 'loop_a;  // Break both loops
+            }
+            println(y);
+        }
+    }
+
+    println("Done with labeled breaks");
+
+    println("=== Unlabeled continue (same loop) ===");
+    for i in 0..5 {
+        if i == 2 {
+            continue;  // Skip to next iteration
+        }
+        println(i);
+    }
+
+    println("=== Unlabeled break (inner loop) ===");
+    for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 {
+                break;  // Break inner loop only
+            }
+            println(j);
+        }
+    }
+
+    println("Exit");
+}

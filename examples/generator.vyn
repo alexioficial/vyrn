@@ -1,0 +1,24 @@
+gen fn count() -> i32 {
+    yield 10;
+    yield 20;
+    yield 30;
+}
+
+gen fn squares() -> i32 {
+    yield 1;
+    yield 4;
+    yield 9;
+    yield 16;
+}
+
+fn main() {
+    println("Count generator:");
+    for x in count() {
+        println(x);
+    }
+
+    println("Squares generator:");
+    for s in squares() {
+        println(s);
+    }
+}
