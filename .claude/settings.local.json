@@ -56,7 +56,16 @@
       "Bash(./target/release/vyrn /tmp/test_param_name.vyn --run)",
       "Bash(./target/release/vyrn /tmp/test_two_lets.vyn --run)",
       "Bash(./target/release/vyrn /tmp/test_one_let.vyn --run)",
-      "Bash(./target/release/vyrn:*)"
+      "Bash(./target/release/vyrn:*)",
+      "Bash(ls \"C:/Users/Alexi/Desktop/_/Programming/Personal/vyrn/vscode-extension/\"*.vsix)",
+      "Bash(tasklist)",
+      "Bash(timeout 2 ./target/debug/vyrn --lsp)",
+      "Bash(timeout 2 ./target/debug/vyrn.exe --lsp)",
+      "Bash(cp -r \"C:/Users/Alexi/Desktop/_/Programming/Personal/vyrn/vscode-extension/syntaxes\" \"C:/Users/Alexi/.vscode/extensions/vyrn.vyrn-language-0.1.0/syntaxes\")",
+      "Bash(cp \"C:/Users/Alexi/Desktop/_/Programming/Personal/vyrn/vscode-extension/extension.js\" \"C:/Users/Alexi/.vscode/extensions/vyrn.vyrn-language-0.1.0/extension.js\")",
+      "Bash(cp \"C:/Users/Alexi/Desktop/_/Programming/Personal/vyrn/vscode-extension/package.json\" \"C:/Users/Alexi/.vscode/extensions/vyrn.vyrn-language-0.1.0/package.json\")",
+      "Bash(cp \"C:/Users/Alexi/Desktop/_/Programming/Personal/vyrn/vscode-extension/language-configuration.json\" \"C:/Users/Alexi/.vscode/extensions/vyrn.vyrn-language-0.1.0/language-configuration.json\")",
+      "Bash(where vyrn *)"
     ]
   }
 }

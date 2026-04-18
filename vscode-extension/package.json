@@ -1,0 +1,41 @@
+{
+  "name": "vyrn-language",
+  "displayName": "Vyrn Language Support",
+  "description": "Syntax highlighting, diagnostics, hover, and completions for Vyrn (.vyn files)",
+  "version": "0.1.0",
+  "publisher": "vyrn",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:vyrn"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "vyrn",
+        "aliases": ["Vyrn", "vyrn"],
+        "extensions": [".vyn"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "vyrn",
+        "scopeName": "source.vyrn",
+        "path": "./syntaxes/vyrn.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Vyrn",
+      "properties": {
+        "vyrn.serverPath": {
+          "type": "string",
+          "default": "vyrn",
+          "description": "Path to the vyrn compiler binary (must support --lsp flag). Defaults to 'vyrn' on PATH."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  }
+}

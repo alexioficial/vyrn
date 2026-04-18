@@ -622,6 +622,26 @@ impl CodeGen {
         self.ensure_runtime_func("vyrn_bool_to_string",  &[types::I8],               Some(types::I64));
         self.ensure_runtime_func("vyrn_fmod_f64",        &[types::F64, types::F64],  Some(types::F64));
 
+        // stdlib — math
+        self.ensure_runtime_func("vyrn_min_i32",   &[types::I32, types::I32],              Some(types::I32));
+        self.ensure_runtime_func("vyrn_max_i32",   &[types::I32, types::I32],              Some(types::I32));
+        self.ensure_runtime_func("vyrn_min_f64",   &[types::F64, types::F64],              Some(types::F64));
+        self.ensure_runtime_func("vyrn_max_f64",   &[types::F64, types::F64],              Some(types::F64));
+        self.ensure_runtime_func("vyrn_floor_f64", &[types::F64],                           Some(types::F64));
+        self.ensure_runtime_func("vyrn_ceil_f64",  &[types::F64],                           Some(types::F64));
+        self.ensure_runtime_func("vyrn_round_f64", &[types::F64],                           Some(types::F64));
+        self.ensure_runtime_func("vyrn_clamp_i32", &[types::I32, types::I32, types::I32],  Some(types::I32));
+        self.ensure_runtime_func("vyrn_clamp_f64", &[types::F64, types::F64, types::F64],  Some(types::F64));
+        // stdlib — string
+        self.ensure_runtime_func("vyrn_str_len",    &[types::I64],                          Some(types::I32));
+        self.ensure_runtime_func("vyrn_str_concat", &[types::I64, types::I64],              Some(types::I64));
+        self.ensure_runtime_func("vyrn_str_eq",     &[types::I64, types::I64],              Some(types::I8));
+        // stdlib — I/O
+        self.ensure_runtime_func("vyrn_input_line", &[],                                     Some(types::I64));
+        // stdlib — parse
+        self.ensure_runtime_func("vyrn_parse_i32",  &[types::I64],                          Some(types::I32));
+        self.ensure_runtime_func("vyrn_parse_f64",  &[types::I64],                          Some(types::F64));
+
         // Generator functions
         self.ensure_runtime_func("vyrn_gen_ctx_alloc",   &[types::I64],              Some(types::I64));
         self.ensure_runtime_func("vyrn_gen_start",       &[types::I64, types::I64],  Some(types::I64));
@@ -1449,6 +1469,150 @@ impl CodeGen {
                 let call = builder.ins().call(fref, &[d0, d1]);
                 let r = builder.inst_results(call)[0];
                 (r, Type::F64)
+            }
+
+            // ── stdlib: math ──────────────────────────────────────────────────
+
+            "min" if args.len() == 2 => {
+                let (v0, ty0) = self.emit_expr(&args[0], builder, fn_refs);
+                let (v1, ty1) = self.emit_expr(&args[1], builder, fn_refs);
+                if is_float(&ty0) || is_float(&ty1) {
+                    let a = self.coerce_to_f64(v0, &ty0, builder);
+                    let b = self.coerce_to_f64(v1, &ty1, builder);
+                    let call = builder.ins().call(fn_refs["vyrn_min_f64"], &[a, b]);
+                    (builder.inst_results(call)[0], Type::F64)
+                } else {
+                    let call = builder.ins().call(fn_refs["vyrn_min_i32"], &[v0, v1]);
+                    (builder.inst_results(call)[0], Type::I32)
+                }
+            }
+
+            "max" if args.len() == 2 => {
+                let (v0, ty0) = self.emit_expr(&args[0], builder, fn_refs);
+                let (v1, ty1) = self.emit_expr(&args[1], builder, fn_refs);
+                if is_float(&ty0) || is_float(&ty1) {
+                    let a = self.coerce_to_f64(v0, &ty0, builder);
+                    let b = self.coerce_to_f64(v1, &ty1, builder);
+                    let call = builder.ins().call(fn_refs["vyrn_max_f64"], &[a, b]);
+                    (builder.inst_results(call)[0], Type::F64)
+                } else {
+                    let call = builder.ins().call(fn_refs["vyrn_max_i32"], &[v0, v1]);
+                    (builder.inst_results(call)[0], Type::I32)
+                }
+            }
+
+            "floor" if args.len() == 1 => {
+                let (v, ty) = self.emit_expr(&args[0], builder, fn_refs);
+                let d = self.coerce_to_f64(v, &ty, builder);
+                let call = builder.ins().call(fn_refs["vyrn_floor_f64"], &[d]);
+                (builder.inst_results(call)[0], Type::F64)
+            }
+
+            "ceil" if args.len() == 1 => {
+                let (v, ty) = self.emit_expr(&args[0], builder, fn_refs);
+                let d = self.coerce_to_f64(v, &ty, builder);
+                let call = builder.ins().call(fn_refs["vyrn_ceil_f64"], &[d]);
+                (builder.inst_results(call)[0], Type::F64)
+            }
+
+            "round" if args.len() == 1 => {
+                let (v, ty) = self.emit_expr(&args[0], builder, fn_refs);
+                let d = self.coerce_to_f64(v, &ty, builder);
+                let call = builder.ins().call(fn_refs["vyrn_round_f64"], &[d]);
+                (builder.inst_results(call)[0], Type::F64)
+            }
+
+            "clamp" if args.len() == 3 => {
+                let (v0, ty0) = self.emit_expr(&args[0], builder, fn_refs);
+                let (v1, ty1) = self.emit_expr(&args[1], builder, fn_refs);
+                let (v2, ty2) = self.emit_expr(&args[2], builder, fn_refs);
+                if is_float(&ty0) || is_float(&ty1) || is_float(&ty2) {
+                    let a = self.coerce_to_f64(v0, &ty0, builder);
+                    let b = self.coerce_to_f64(v1, &ty1, builder);
+                    let c = self.coerce_to_f64(v2, &ty2, builder);
+                    let call = builder.ins().call(fn_refs["vyrn_clamp_f64"], &[a, b, c]);
+                    (builder.inst_results(call)[0], Type::F64)
+                } else {
+                    let call = builder.ins().call(fn_refs["vyrn_clamp_i32"], &[v0, v1, v2]);
+                    (builder.inst_results(call)[0], Type::I32)
+                }
+            }
+
+            // ── stdlib: string ────────────────────────────────────────────────
+
+            "str_len" if args.len() == 1 => {
+                let (v, _) = self.emit_expr(&args[0], builder, fn_refs);
+                let call = builder.ins().call(fn_refs["vyrn_str_len"], &[v]);
+                (builder.inst_results(call)[0], Type::I32)
+            }
+
+            "str_concat" if args.len() == 2 => {
+                let (v0, _) = self.emit_expr(&args[0], builder, fn_refs);
+                let (v1, _) = self.emit_expr(&args[1], builder, fn_refs);
+                let call = builder.ins().call(fn_refs["vyrn_str_concat"], &[v0, v1]);
+                (builder.inst_results(call)[0], Type::Str)
+            }
+
+            "str_eq" if args.len() == 2 => {
+                let (v0, _) = self.emit_expr(&args[0], builder, fn_refs);
+                let (v1, _) = self.emit_expr(&args[1], builder, fn_refs);
+                let call = builder.ins().call(fn_refs["vyrn_str_eq"], &[v0, v1]);
+                (builder.inst_results(call)[0], Type::Bool)
+            }
+
+            // ── stdlib: I/O ───────────────────────────────────────────────────
+
+            "input" if args.is_empty() => {
+                let call = builder.ins().call(fn_refs["vyrn_input_line"], &[]);
+                (builder.inst_results(call)[0], Type::Str)
+            }
+
+            // ── stdlib: parse ─────────────────────────────────────────────────
+
+            "parse_int" if args.len() == 1 => {
+                let (v, _) = self.emit_expr(&args[0], builder, fn_refs);
+                let call = builder.ins().call(fn_refs["vyrn_parse_i32"], &[v]);
+                (builder.inst_results(call)[0], Type::I32)
+            }
+
+            "parse_float" if args.len() == 1 => {
+                let (v, _) = self.emit_expr(&args[0], builder, fn_refs);
+                let call = builder.ins().call(fn_refs["vyrn_parse_f64"], &[v]);
+                (builder.inst_results(call)[0], Type::F64)
+            }
+
+            // ── stdlib: type conversions (inline) ─────────────────────────────
+
+            "int" if args.len() == 1 => {
+                let (v, ty) = self.emit_expr(&args[0], builder, fn_refs);
+                let result = match &ty {
+                    Type::I32 | Type::U32 => v,
+                    Type::I64  => builder.ins().ireduce(types::I32, v),
+                    Type::F64  => builder.ins().fcvt_to_sint(types::I32, v),
+                    Type::F32  => builder.ins().fcvt_to_sint(types::I32, v),
+                    Type::Bool => builder.ins().uextend(types::I32, v),
+                    _          => v,
+                };
+                (result, Type::I32)
+            }
+
+            "float" if args.len() == 1 => {
+                let (v, ty) = self.emit_expr(&args[0], builder, fn_refs);
+                let result = self.coerce_to_f64(v, &ty, builder);
+                (result, Type::F64)
+            }
+
+            "to_i64" if args.len() == 1 => {
+                let (v, ty) = self.emit_expr(&args[0], builder, fn_refs);
+                let result = match &ty {
+                    Type::I64 => v,
+                    Type::I32 | Type::U32 => builder.ins().sextend(types::I64, v),
+                    Type::F64 => builder.ins().fcvt_to_sint(types::I64, v),
+                    Type::F32 => builder.ins().fcvt_to_sint(types::I64, v),
+                    Type::Bool => builder.ins().uextend(types::I64, v),
+                    _ => v,
+                };
+                (result, Type::I64)
             }
 
             "to_string" if args.len() == 1 => {

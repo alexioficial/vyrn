@@ -1,0 +1,174 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Vyrn",
+  "scopeName": "source.vyrn",
+  "fileTypes": ["vyn"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#fstrings" },
+    { "include": "#strings" },
+    { "include": "#loop_labels" },
+    { "include": "#keywords_control" },
+    { "include": "#keywords_decl" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#fn_definitions" },
+    { "include": "#struct_definitions" },
+    { "include": "#fn_calls" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.vyrn",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.vyrn",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": {
+            "0": { "name": "comment.block.vyrn" }
+          }
+        }
+      ]
+    },
+
+    "strings": {
+      "name": "string.quoted.double.vyrn",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.vyrn", "match": "\\\\." }
+      ]
+    },
+
+    "fstrings": {
+      "name": "string.interpolated.vyrn",
+      "begin": "f\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.vyrn" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.vyrn" }
+      },
+      "patterns": [
+        {
+          "name": "meta.interpolation.vyrn",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.vyrn" } },
+          "endCaptures":   { "0": { "name": "punctuation.section.interpolation.end.vyrn" } },
+          "patterns": [
+            { "include": "#fn_calls" },
+            { "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\.[a-zA-Z_][a-zA-Z0-9_]*\\b",
+              "name": "variable.other.member.vyrn" },
+            { "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b",
+              "name": "variable.other.vyrn" }
+          ]
+        },
+        { "name": "constant.character.escape.vyrn", "match": "\\\\." }
+      ]
+    },
+
+    "loop_labels": {
+      "name": "entity.name.label.vyrn",
+      "match": "'[a-zA-Z_][a-zA-Z0-9_]*"
+    },
+
+    "keywords_control": {
+      "name": "keyword.control.vyrn",
+      "match": "\\b(if|else|for|while|return|break|continue|in|yield)\\b"
+    },
+
+    "keywords_decl": {
+      "name": "keyword.declaration.vyrn",
+      "match": "\\b(fn|gen|struct|let|mut)\\b"
+    },
+
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.vyrn",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+
+    "types": {
+      "name": "support.type.primitive.vyrn",
+      "match": "\\b(i32|i64|f32|f64|str|bool|void|u32)\\b"
+    },
+
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.vyrn",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.vyrn",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+
+    "fn_definitions": {
+      "match": "\\b(fn|gen\\s+fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.vyrn" },
+        "2": { "name": "entity.name.function.vyrn" }
+      }
+    },
+
+    "struct_definitions": {
+      "match": "\\b(struct)\\s+([A-Z][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.vyrn" },
+        "2": { "name": "entity.name.type.struct.vyrn" }
+      }
+    },
+
+    "fn_calls": {
+      "name": "entity.name.function.call.vyrn",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+    },
+
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.vyrn",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.logical.vyrn",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.vyrn",
+          "match": "(\\+|-|\\*|/|%)"
+        },
+        {
+          "name": "keyword.operator.bitwise.vyrn",
+          "match": "(&|\\||\\^|<<|>>)"
+        },
+        {
+          "name": "keyword.operator.assignment.vyrn",
+          "match": "(?<![=!<>])=(?!=)"
+        },
+        {
+          "name": "keyword.operator.arrow.vyrn",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.range.vyrn",
+          "match": "\\.\\.(=?)"
+        }
+      ]
+    }
+  }
+}

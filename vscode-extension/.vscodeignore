@@ -1,0 +1,9 @@
+**/.git/**
+**/.DS_Store
+**/*.vsix
+**/.vscodeignore
+node_modules/.bin/**
+node_modules/**/test/**
+node_modules/**/*.md
+node_modules/**/*.ts
+node_modules/**/*.map

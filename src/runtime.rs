@@ -263,6 +263,84 @@ pub extern "C" fn vyrn_gen_end(ctx_ptr: i64) {
     // tx is dropped here, closing the channel
 }
 
+// ─── Standard library: Math ───────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn vyrn_min_i32(a: i32, b: i32) -> i32 { a.min(b) }
+
+#[no_mangle]
+pub extern "C" fn vyrn_max_i32(a: i32, b: i32) -> i32 { a.max(b) }
+
+#[no_mangle]
+pub extern "C" fn vyrn_min_f64(a: f64, b: f64) -> f64 { a.min(b) }
+
+#[no_mangle]
+pub extern "C" fn vyrn_max_f64(a: f64, b: f64) -> f64 { a.max(b) }
+
+#[no_mangle]
+pub extern "C" fn vyrn_floor_f64(x: f64) -> f64 { x.floor() }
+
+#[no_mangle]
+pub extern "C" fn vyrn_ceil_f64(x: f64) -> f64 { x.ceil() }
+
+#[no_mangle]
+pub extern "C" fn vyrn_round_f64(x: f64) -> f64 { x.round() }
+
+#[no_mangle]
+pub extern "C" fn vyrn_clamp_i32(val: i32, lo: i32, hi: i32) -> i32 { val.clamp(lo, hi) }
+
+#[no_mangle]
+pub extern "C" fn vyrn_clamp_f64(val: f64, lo: f64, hi: f64) -> f64 { val.clamp(lo, hi) }
+
+// ─── Standard library: String ─────────────────────────────────────────────────
+
+#[no_mangle]
+pub unsafe extern "C" fn vyrn_str_len(ptr: i64) -> i32 {
+    if ptr == 0 { return 0; }
+    CStr::from_ptr(ptr as *const i8).to_bytes().len() as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vyrn_str_concat(a: i64, b: i64) -> i64 {
+    let sa = if a == 0 { "" } else { CStr::from_ptr(a as *const i8).to_str().unwrap_or("") };
+    let sb = if b == 0 { "" } else { CStr::from_ptr(b as *const i8).to_str().unwrap_or("") };
+    let s = std::ffi::CString::new(format!("{}{}", sa, sb)).unwrap_or_default();
+    s.into_raw() as i64
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vyrn_str_eq(a: i64, b: i64) -> i8 {
+    let sa = if a == 0 { "" } else { CStr::from_ptr(a as *const i8).to_str().unwrap_or("") };
+    let sb = if b == 0 { "" } else { CStr::from_ptr(b as *const i8).to_str().unwrap_or("") };
+    if sa == sb { 1 } else { 0 }
+}
+
+// ─── Standard library: I/O ───────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn vyrn_input_line() -> i64 {
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    if line.ends_with('\n') { line.pop(); }
+    if line.ends_with('\r') { line.pop(); }
+    let s = std::ffi::CString::new(line).unwrap_or_default();
+    s.into_raw() as i64
+}
+
+// ─── Standard library: Parse ─────────────────────────────────────────────────
+
+#[no_mangle]
+pub unsafe extern "C" fn vyrn_parse_i32(ptr: i64) -> i32 {
+    if ptr == 0 { return 0; }
+    CStr::from_ptr(ptr as *const i8).to_string_lossy().trim().parse::<i32>().unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vyrn_parse_f64(ptr: i64) -> f64 {
+    if ptr == 0 { return 0.0; }
+    CStr::from_ptr(ptr as *const i8).to_string_lossy().trim().parse::<f64>().unwrap_or(0.0)
+}
+
 // ─── Symbol table for JITBuilder ──────────────────────────────────────────────
 // List every (name, fn_ptr) pair so main.rs can register them all at once.
 
@@ -297,5 +375,24 @@ pub fn all_symbols() -> Vec<(&'static str, *const u8)> {
         ("vyrn_gen_value_i64",    vyrn_gen_value_i64    as *const u8),
         ("vyrn_yield_i64",        vyrn_yield_i64        as *const u8),
         ("vyrn_gen_end",          vyrn_gen_end          as *const u8),
+        // stdlib — math
+        ("vyrn_min_i32",          vyrn_min_i32          as *const u8),
+        ("vyrn_max_i32",          vyrn_max_i32          as *const u8),
+        ("vyrn_min_f64",          vyrn_min_f64          as *const u8),
+        ("vyrn_max_f64",          vyrn_max_f64          as *const u8),
+        ("vyrn_floor_f64",        vyrn_floor_f64        as *const u8),
+        ("vyrn_ceil_f64",         vyrn_ceil_f64         as *const u8),
+        ("vyrn_round_f64",        vyrn_round_f64        as *const u8),
+        ("vyrn_clamp_i32",        vyrn_clamp_i32        as *const u8),
+        ("vyrn_clamp_f64",        vyrn_clamp_f64        as *const u8),
+        // stdlib — string
+        ("vyrn_str_len",          vyrn_str_len          as *const u8),
+        ("vyrn_str_concat",       vyrn_str_concat       as *const u8),
+        ("vyrn_str_eq",           vyrn_str_eq           as *const u8),
+        // stdlib — I/O
+        ("vyrn_input_line",       vyrn_input_line       as *const u8),
+        // stdlib — parse
+        ("vyrn_parse_i32",        vyrn_parse_i32        as *const u8),
+        ("vyrn_parse_f64",        vyrn_parse_f64        as *const u8),
     ]
 }

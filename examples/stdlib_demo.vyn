@@ -1,0 +1,50 @@
+// stdlib_demo.vyn — exercises the Vyrn standard library
+
+fn main() {
+    // ── Math ─────────────────────────────────────────────────────────────────
+    println("=== Math ===");
+    println(min(3, 7));          // 3
+    println(max(3, 7));          // 7
+    println(min(1.5, 2.5));      // 1.5
+    println(max(1.5, 2.5));      // 2.5
+
+    println(floor(3.9));         // 3
+    println(ceil(3.1));          // 4
+    println(round(3.5));         // 4
+    println(round(3.4));         // 3
+
+    println(clamp(15, 0, 10));   // 10  (integer)
+    println(clamp(-5, 0, 10));   // 0
+    println(clamp(7.0, 0.0, 5.0)); // 5
+
+    // ── Type conversions ─────────────────────────────────────────────────────
+    println("=== Conversions ===");
+    let xi: i32 = int(3.99);     // truncates → 3
+    let xf: f64 = float(42);     // → 42.0
+    let xl: i64 = to_i64(100);   // → 100
+    println(xi);
+    println(xf);
+    println(xl);
+
+    // ── String operations ────────────────────────────────────────────────────
+    println("=== Strings ===");
+    let hello = "Hello";
+    let world = ", World!";
+    let msg = str_concat(hello, world);
+    println(msg);                // Hello, World!
+    println(str_len(msg));       // 13
+    println(str_eq("abc", "abc")); // true
+    println(str_eq("abc", "xyz")); // false
+
+    // ── Parse ────────────────────────────────────────────────────────────────
+    println("=== Parse ===");
+    let n = parse_int("42");
+    let f2 = parse_float("3.14");
+    println(n);    // 42
+    println(f2);   // 3.14
+
+    // ── I/O (interactive — commented out by default) ──────────────────────
+    // println("Enter your name:");
+    // let name = input();
+    // println(f"Hello, {name}!");
+}

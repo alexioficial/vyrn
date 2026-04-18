@@ -4,6 +4,7 @@ mod ast;
 mod parser;
 mod codegen;
 mod runtime;
+mod lsp;
 
 use std::{env, fs, path::Path, process::Command};
 
@@ -16,6 +17,12 @@ fn usage() {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    // LSP mode: vyrn --lsp  (no source file needed)
+    if args.get(1).map(|s| s.as_str()) == Some("--lsp") {
+        lsp::run();
+        return;
+    }
 
     if args.len() < 2 {
         usage();
